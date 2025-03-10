@@ -1,20 +1,49 @@
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Provider as PaperProvider, DefaultTheme } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { View, Text } from 'react-native';
+
+// Import screens
+import HomeScreen from './src/screens/HomeScreen';
+import DeviceScreen from './src/screens/DeviceScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+
+const Stack = createNativeStackNavigator();
+
+const theme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    primary: '#2196F3',
+    accent: '#03A9F4',
+  },
+};
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <PaperProvider theme={theme}>
+      <NavigationContainer>
+        <Stack.Navigator initialRouteName="Home">
+          <Stack.Screen 
+            name="Home" 
+            component={HomeScreen}
+            options={{ title: 'Bluetooth Audio Link' }}
+          />
+          <Stack.Screen 
+            name="Device" 
+            component={DeviceScreen}
+            options={{ title: 'Device Details' }}
+          />
+          <Stack.Screen 
+            name="Settings" 
+            component={SettingsScreen}
+            options={{ title: 'Settings' }}
+          />
+        </Stack.Navigator>
+        <StatusBar style="auto" />
+      </NavigationContainer>
+    </PaperProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

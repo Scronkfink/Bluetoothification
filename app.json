@@ -23,6 +23,22 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
-  }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraPermissions": [
+              "android.permission.BLUETOOTH",
+              "android.permission.BLUETOOTH_ADMIN",
+              "android.permission.BLUETOOTH_CONNECT",
+              "android.permission.BLUETOOTH_SCAN"
+            ]
+          }
+        }
+      ]
+    ]
+  },
+  "newArchEnabled": true
 }
