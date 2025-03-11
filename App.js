@@ -9,6 +9,7 @@ import { View, Text } from 'react-native';
 import HomeScreen from './src/screens/HomeScreen';
 import DeviceScreen from './src/screens/DeviceScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import BluetoothAudioScreen from './src/screens/BluetoothAudioScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -40,6 +41,11 @@ export default function App() {
             name="Settings" 
             component={SettingsScreen}
             options={{ title: 'Settings' }}
+          />
+          <Stack.Screen 
+            name="BluetoothAudio" 
+            component={BluetoothAudioScreen}
+            options={{ title: 'Audio Control' }}
           />
         </Stack.Navigator>
         <StatusBar style="auto" />

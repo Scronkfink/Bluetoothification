@@ -1,72 +1,62 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, Alert, Platform, PermissionsAndroid } from 'react-native';
-import { Button, Card, Title, Paragraph, ActivityIndicator, IconButton } from 'react-native-paper';
+import { View, StyleSheet, FlatList, Alert, Platform, PermissionsAndroid, NativeEventEmitter } from 'react-native';
+import { Button, Card, Title, Paragraph, ActivityIndicator, IconButton, Checkbox, Portal, Dialog } from 'react-native-paper';
 import { BleManager } from 'react-native-ble-plx';
 import * as ExpoDevice from 'expo-device';
+import { NativeModules } from 'react-native';
 
-// Initialize BLE manager with error handling
-let bleManager = null;
-try {
-  if (Platform.OS !== 'web') {
-    bleManager = new BleManager();
-  }
-} catch (error) {
-  console.error('Failed to initialize BLE manager:', error);
-}
-
-// Mock data as fallback
-const mockDevices = [
-  { id: '1', name: 'Speaker XB-33', rssi: -65 },
-  { id: '2', name: 'Headphones WH-1000', rssi: -72 },
-  { id: '3', name: 'Car Audio System', rssi: -80 },
-];
+const { BluetoothAudioModule } = NativeModules;
+const bluetoothEventEmitter = new NativeEventEmitter(BluetoothAudioModule);
 
 export default function HomeScreen({ navigation }) {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState([]);
-  const [useMockData, setUseMockData] = useState(false); // Default to real data now
+  const [selectedDevices, setSelectedDevices] = useState(new Set());
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [showConnectingDialog, setShowConnectingDialog] = useState(false);
   const [permissionsGranted, setPermissionsGranted] = useState(false);
-  const [scanTimeout, setScanTimeout] = useState(null); // Add state for tracking timeout
 
-  // Request permissions on component mount
   useEffect(() => {
     requestPermissions();
+    
+    // Set up event listeners for classic Bluetooth discovery
+    const deviceFoundListener = bluetoothEventEmitter.addListener(
+      'classicDeviceFoundDetailed',
+      (device) => {
+        setDevices(prevDevices => {
+          const deviceExists = prevDevices.some(d => d.id === device.id);
+          if (!deviceExists) {
+            return [...prevDevices, device];
+          }
+          return prevDevices;
+        });
+      }
+    );
 
-    // Clean up BLE manager and any pending timeouts on unmount
+    const discoveryFinishedListener = bluetoothEventEmitter.addListener(
+      'classicDiscoveryFinished',
+      () => {
+        setIsScanning(false);
+      }
+    );
+
     return () => {
-      if (bleManager) {
-        try {
-          stopScan();
-          bleManager.destroy();
-        } catch (error) {
-          console.error('Error cleaning up BLE manager:', error);
-        }
+      deviceFoundListener.remove();
+      discoveryFinishedListener.remove();
+      if (isScanning) {
+        BluetoothAudioModule.stopClassicDiscovery();
       }
     };
   }, []);
 
-  // Request necessary permissions for Bluetooth
   const requestPermissions = async () => {
     if (Platform.OS === 'android') {
       try {
-        // For Android 12+, we need BLUETOOTH_SCAN and BLUETOOTH_CONNECT
-        if (Platform.Version >= 31) { // Android 12 (API level 31)
+        if (Platform.Version >= 31) {
           const results = await Promise.all([
-            PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, {
-              title: 'Bluetooth Scan Permission',
-              message: 'This app needs to scan for Bluetooth devices.',
-              buttonPositive: 'OK',
-            }),
-            PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT, {
-              title: 'Bluetooth Connect Permission',
-              message: 'This app needs to connect to Bluetooth devices.',
-              buttonPositive: 'OK',
-            }),
-            PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, {
-              title: 'Location Permission',
-              message: 'This app needs access to your location for Bluetooth scanning.',
-              buttonPositive: 'OK',
-            }),
+            PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN),
+            PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT),
+            PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION),
           ]);
           
           const allGranted = results.every(result => result === PermissionsAndroid.RESULTS.GRANTED);
@@ -80,164 +70,137 @@ export default function HomeScreen({ navigation }) {
             );
           }
         } else {
-          // For older Android versions
           const granted = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-            {
-              title: 'Location Permission',
-              message: 'This app needs access to your location for Bluetooth scanning.',
-              buttonPositive: 'OK',
-            },
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
           );
-          
           setPermissionsGranted(granted === PermissionsAndroid.RESULTS.GRANTED);
-          
-          if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-            Alert.alert(
-              'Permission Required',
-              'This app needs Location permission to scan for Bluetooth devices.',
-              [{ text: 'OK' }]
-            );
-          }
         }
       } catch (error) {
-        console.error('Error requesting permissions:', error);
         Alert.alert('Error', 'Failed to request necessary permissions.');
       }
     } else {
-      // iOS doesn't need explicit permissions for basic scanning
       setPermissionsGranted(true);
     }
   };
 
-  const startScan = () => {
-    // Clear previous devices and any existing timeout
+  const startScan = async () => {
     setDevices([]);
-    if (scanTimeout) {
-      clearTimeout(scanTimeout);
-    }
     setIsScanning(true);
 
-    if (useMockData) {
-      // Simulate scanning delay with mock data
-      const timeout = setTimeout(() => {
-        setDevices(mockDevices);
-        setIsScanning(false);
-      }, 2000);
-      setScanTimeout(timeout);
-      return;
-    }
-
-    // Check if BLE manager is available
-    if (!bleManager) {
-      Alert.alert(
-        'Bluetooth Not Available',
-        'Bluetooth functionality is not available on this device or platform.',
-        [{ text: 'Use Mock Data', onPress: () => {
-          setUseMockData(true);
-          startScan(); // Restart scan with mock data
-        }}]
-      );
-      setIsScanning(false);
-      return;
-    }
-
-    // Check permissions
     if (!permissionsGranted) {
       Alert.alert(
         'Permissions Required',
         'Please grant the necessary permissions to scan for Bluetooth devices.',
         [
           { text: 'Cancel', onPress: () => setIsScanning(false) },
-          { text: 'Request Permissions', onPress: async () => {
-            await requestPermissions();
-            setIsScanning(false);
-          }}
+          { text: 'Request Permissions', onPress: requestPermissions }
         ]
       );
       return;
     }
 
-    // Start real Bluetooth scanning
     try {
-      console.log('Starting BLE scan...');
-      
-      bleManager.startDeviceScan(null, null, (error, device) => {
-        if (error) {
-          console.error('Scanning error:', error);
-          Alert.alert('Scanning Error', error.message);
-          stopScan();
-          return;
-        }
-
-        if (device) {
-          console.log('Found device:', device.name || 'Unnamed', device.id);
-          
-          // Add device to the list if it has a name or if we want to show all devices
-          if (device.name) {
-            setDevices(prevDevices => {
-              // Check if device already exists in the list
-              const deviceExists = prevDevices.some(d => d.id === device.id);
-              if (!deviceExists) {
-                return [...prevDevices, device];
-              }
-              return prevDevices;
-            });
-          }
-        }
-      });
-
-      // Stop scanning after 15 seconds
-      const timeout = setTimeout(() => {
-        stopScan();
-      }, 15000);
-      setScanTimeout(timeout);
-      
+      await BluetoothAudioModule.startClassicDiscovery();
     } catch (error) {
-      console.error('Error starting scan:', error);
       Alert.alert('Error', 'Failed to start Bluetooth scanning: ' + error.message);
       setIsScanning(false);
     }
   };
 
-  const stopScan = () => {
-    // Clear any existing timeout
-    if (scanTimeout) {
-      clearTimeout(scanTimeout);
-      setScanTimeout(null);
+  const stopScan = async () => {
+    try {
+      await BluetoothAudioModule.cancelDiscovery();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to stop Bluetooth scanning: ' + error.message);
     }
-
-    // Stop the BLE scan if it's running
-    if (bleManager && isScanning) {
-      try {
-        bleManager.stopDeviceScan();
-        console.log('BLE scan stopped');
-      } catch (error) {
-        console.error('Error stopping scan:', error);
-        Alert.alert('Error', 'Failed to stop Bluetooth scanning: ' + error.message);
-      }
-    }
-
-    // Update scanning state
     setIsScanning(false);
   };
 
+  const toggleDeviceSelection = (deviceId) => {
+    setSelectedDevices(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(deviceId)) {
+        newSet.delete(deviceId);
+      } else {
+        newSet.add(deviceId);
+      }
+      return newSet;
+    });
+  };
+
+  const connectSelectedDevices = async () => {
+    if (selectedDevices.size === 0) {
+      Alert.alert('No Devices Selected', 'Please select at least one device to connect.');
+      return;
+    }
+
+    setIsConnecting(true);
+    setShowConnectingDialog(true);
+
+    try {
+      // First, ensure virtual sink is started
+      const sinkStarted = await BluetoothAudioModule.startVirtualSink();
+      if (!sinkStarted) {
+        throw new Error('Failed to start virtual audio sink');
+      }
+
+      // Get array of selected device IDs
+      const deviceIds = Array.from(selectedDevices);
+      
+      // Connect each device one by one to ensure proper A2DP setup
+      for (const deviceId of deviceIds) {
+        const device = devices.find(d => d.id === deviceId);
+        if (!device) continue;
+
+        // First create A2DP bond if not already bonded
+        const isBonded = await BluetoothAudioModule.createBond(deviceId);
+        if (!isBonded) {
+          throw new Error(`Failed to bond with device ${device.name || deviceId}`);
+        }
+
+        // Then connect the A2DP profile
+        const connected = await BluetoothAudioModule.connectDevice(deviceId);
+        if (!connected) {
+          throw new Error(`Failed to connect A2DP to device ${device.name || deviceId}`);
+        }
+      }
+
+      // Navigate to the audio control screen
+      navigation.navigate('BluetoothAudio');
+    } catch (error) {
+      // If there's an error, stop the virtual sink
+      try {
+        await BluetoothAudioModule.stopVirtualSink();
+      } catch (cleanupError) {
+        console.error('Failed to cleanup virtual sink:', cleanupError);
+      }
+      Alert.alert('Connection Error', error.message);
+    } finally {
+      setIsConnecting(false);
+      setShowConnectingDialog(false);
+    }
+  };
+
   const renderDevice = ({ item }) => (
-    <Card style={styles.deviceCard} onPress={() => navigation.navigate('Device', { deviceId: item.id, deviceName: item.name || 'Unnamed Device' })}>
+    <Card style={styles.deviceCard}>
       <Card.Content>
         <View style={styles.deviceHeader}>
-          <Title>{item.name || 'Unnamed Device'}</Title>
-          <IconButton icon="bluetooth" size={24} color="#2196F3" />
+          <View style={styles.deviceInfo}>
+            <Title>{item.name || 'Unnamed Device'}</Title>
+            <Paragraph>ID: {item.id.substring(0, 10)}...</Paragraph>
+            <Paragraph>Signal: {item.rssi} dBm</Paragraph>
+          </View>
+          <Checkbox
+            status={selectedDevices.has(item.id) ? 'checked' : 'unchecked'}
+            onPress={() => toggleDeviceSelection(item.id)}
+          />
         </View>
-        <Paragraph>ID: {typeof item.id === 'string' ? (item.id.length > 10 ? item.id.substring(0, 10) + '...' : item.id) : item.id}</Paragraph>
-        <Paragraph>Signal Strength: {item.rssi} dBm</Paragraph>
       </Card.Content>
     </Card>
   );
 
   return (
     <View style={styles.container}>
-      {/* Scan button at the top center */}
       <View style={styles.scanButtonContainer}>
         <Button 
           mode="contained" 
@@ -268,35 +231,33 @@ export default function HomeScreen({ navigation }) {
         }
       />
       
-      {isScanning && (
-        <View style={styles.scanningOverlay}>
-          <ActivityIndicator size="large" color="#2196F3" />
-          <Title style={styles.scanningText}>Scanning for devices...</Title>
+      {selectedDevices.size > 0 && (
+        <View style={styles.bottomContainer}>
+          <Button 
+            mode="contained"
+            icon="hand-wave"
+            onPress={connectSelectedDevices}
+            style={styles.connectButton}
+            loading={isConnecting}
+          >
+            Connect {selectedDevices.size} Device{selectedDevices.size > 1 ? 's' : ''}
+          </Button>
         </View>
       )}
 
-      {/* Toggle between mock and real data (for development) */}
-      <View style={styles.devModeContainer}>
-        <Button 
-          mode="text" 
-          onPress={() => setUseMockData(!useMockData)}
-          style={styles.devModeButton}
-        >
-          {useMockData ? "Using Mock Data" : "Using Real BLE"}
-        </Button>
-      </View>
-
-      {/* Settings button at the bottom */}
-      <View style={styles.buttonContainer}>
-        <Button 
-          mode="outlined" 
-          onPress={() => navigation.navigate('Settings')}
-          style={styles.settingsButton}
-          icon="cog"
-        >
-          Settings
-        </Button>
-      </View>
+      <Portal>
+        <Dialog visible={showConnectingDialog} dismissable={false}>
+          <Dialog.Title>Connecting Devices</Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.dialogContent}>
+              <ActivityIndicator size="large" />
+              <Paragraph style={styles.dialogText}>
+                Establishing connections...
+              </Paragraph>
+            </View>
+          </Dialog.Content>
+        </Dialog>
+      </Portal>
     </View>
   );
 }
@@ -328,25 +289,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  scanningOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    padding: 16,
-    alignItems: 'center',
-  },
-  scanningText: {
-    marginTop: 8,
-  },
-  buttonContainer: {
-    padding: 16,
-    alignItems: 'center',
-  },
-  settingsButton: {
-    width: '80%',
-    borderRadius: 25,
+  deviceInfo: {
+    flex: 1,
   },
   emptyCard: {
     marginTop: 20,
@@ -355,11 +299,25 @@ const styles = StyleSheet.create({
   emptyText: {
     textAlign: 'center',
   },
-  devModeContainer: {
+  bottomContainer: {
+    padding: 16,
+    backgroundColor: 'white',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  connectButton: {
+    width: '100%',
+    borderRadius: 25,
+  },
+  dialogContent: {
     alignItems: 'center',
-    paddingBottom: 8,
+    padding: 16,
   },
-  devModeButton: {
-    marginVertical: 0,
+  dialogText: {
+    marginTop: 16,
+    textAlign: 'center',
   },
-}); 
+});
