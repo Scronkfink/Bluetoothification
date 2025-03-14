@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Alert } from 'react-native';
-import { Button, Card, Title, Paragraph, Switch } from 'react-native-paper';
+import { Button, Card, Title, Paragraph, Switch, IconButton } from 'react-native-paper';
 import { NativeEventEmitter, NativeModules } from 'react-native';
 
 const { BluetoothAudioModule } = NativeModules;
@@ -8,6 +8,7 @@ const eventEmitter = new NativeEventEmitter(BluetoothAudioModule);
 
 export default function BluetoothAudioScreen({ navigation }) {
   const [isVirtualSinkActive, setIsVirtualSinkActive] = useState(false);
+  const [isAudioCapturing, setIsAudioCapturing] = useState(false);
   const [connectedDevices, setConnectedDevices] = useState([]);
 
   useEffect(() => {
@@ -31,28 +32,19 @@ export default function BluetoothAudioScreen({ navigation }) {
     };
   }, []);
 
-  const toggleVirtualSink = async () => {
+  const toggleAudioCapture = async () => {
     try {
-      if (!isVirtualSinkActive) {
-        await BluetoothAudioModule.startVirtualSink();
-        setIsVirtualSinkActive(true);
-        Alert.alert('Success', 'Virtual Bluetooth sink is now active');
+      if (!isAudioCapturing) {
+        await BluetoothAudioModule.startAudioCapture();
+        setIsAudioCapturing(true);
+        Alert.alert('Success', 'Audio capture started');
       } else {
-        await BluetoothAudioModule.stopVirtualSink();
-        setIsVirtualSinkActive(false);
-        Alert.alert('Success', 'Virtual Bluetooth sink has been stopped');
+        await BluetoothAudioModule.stopAudioCapture();
+        setIsAudioCapturing(false);
+        Alert.alert('Success', 'Audio capture stopped');
       }
     } catch (error) {
       Alert.alert('Error', error.message);
-    }
-  };
-
-  const connectDevice = async (deviceAddress) => {
-    try {
-      await BluetoothAudioModule.connectDevice(deviceAddress);
-      Alert.alert('Success', 'Device connected successfully');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to connect device: ' + error.message);
     }
   };
 
@@ -69,14 +61,17 @@ export default function BluetoothAudioScreen({ navigation }) {
     <View style={styles.container}>
       <Card style={styles.card}>
         <Card.Content>
-          <Title>Virtual Bluetooth Sink</Title>
+          <Title>Audio Control</Title>
           <View style={styles.switchContainer}>
-            <Paragraph>Enable Virtual Sink</Paragraph>
+            <Paragraph>Audio Capture</Paragraph>
             <Switch
-              value={isVirtualSinkActive}
-              onValueChange={toggleVirtualSink}
+              value={isAudioCapturing}
+              onValueChange={toggleAudioCapture}
             />
           </View>
+          <Paragraph style={styles.hint}>
+            Toggle this switch when you're ready to play audio to connected devices
+          </Paragraph>
         </Card.Content>
       </Card>
 
@@ -134,5 +129,10 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 16,
+  },
+  hint: {
+    marginTop: 8,
+    fontStyle: 'italic',
+    color: '#666',
   },
 }); 

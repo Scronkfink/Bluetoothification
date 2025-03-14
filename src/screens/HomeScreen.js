@@ -138,43 +138,44 @@ export default function HomeScreen({ navigation }) {
     setShowConnectingDialog(true);
 
     try {
-      // First, ensure virtual sink is started
-      const sinkStarted = await BluetoothAudioModule.startVirtualSink();
-      if (!sinkStarted) {
-        throw new Error('Failed to start virtual audio sink');
-      }
-
+      console.log('Starting connection process...');
+      
       // Get array of selected device IDs
       const deviceIds = Array.from(selectedDevices);
+      console.log(`Attempting to connect ${deviceIds.length} devices:`, deviceIds);
       
-      // Connect each device one by one to ensure proper A2DP setup
-      for (const deviceId of deviceIds) {
-        const device = devices.find(d => d.id === deviceId);
-        if (!device) continue;
+      // Connect all devices through the virtual sink
+      const results = await BluetoothAudioModule.connectMultipleDevices(deviceIds);
+      console.log('Connection results:', results);
+      
+      // Check for any connection failures
+      const failures = results.filter(result => result.status !== 'connected');
+      const successes = results.filter(result => result.status === 'connected');
+      
+      console.log(`Connected: ${successes.length}, Failed: ${failures.length}`);
 
-        // First create A2DP bond if not already bonded
-        const isBonded = await BluetoothAudioModule.createBond(deviceId);
-        if (!isBonded) {
-          throw new Error(`Failed to bond with device ${device.name || deviceId}`);
-        }
-
-        // Then connect the A2DP profile
-        const connected = await BluetoothAudioModule.connectDevice(deviceId);
-        if (!connected) {
-          throw new Error(`Failed to connect A2DP to device ${device.name || deviceId}`);
-        }
+      if (failures.length > 0) {
+        const failedDevices = failures.map(f => {
+          const device = devices.find(d => d.id === f.id);
+          return `${device?.name || f.id} (${f.status})`;
+        }).join('\n');
+        
+        Alert.alert(
+          'Connection Warning', 
+          `Some devices failed to connect:\n${failedDevices}`,
+          [{ text: 'OK' }]
+        );
       }
 
-      // Navigate to the audio control screen
-      navigation.navigate('BluetoothAudio');
+      // If at least one device connected successfully, proceed to audio control
+      if (successes.length > 0) {
+        navigation.navigate('BluetoothAudio');
+      } else {
+        Alert.alert('Connection Error', 'Failed to connect any devices. Please try again.');
+      }
     } catch (error) {
-      // If there's an error, stop the virtual sink
-      try {
-        await BluetoothAudioModule.stopVirtualSink();
-      } catch (cleanupError) {
-        console.error('Failed to cleanup virtual sink:', cleanupError);
-      }
-      Alert.alert('Connection Error', error.message);
+      console.error('Connection error:', error);
+      Alert.alert('Connection Error', error.message || 'Failed to connect devices');
     } finally {
       setIsConnecting(false);
       setShowConnectingDialog(false);
